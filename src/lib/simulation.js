@@ -654,7 +654,7 @@ function drawMathBalance(ctx, width, height, time, params = {}, simulation = {})
 }
 
 function drawPhysicsWave(ctx, width, height, time, params = {}) {
-  const amplitude = 42;
+  const amplitude = 42 * Math.max(0.5, Math.min(2, Number(params.amplitude ?? 1)));
   const frequency = Math.max(1, Number(params.frequency ?? 2));
   const mid = height * 0.53;
   line(ctx, 68, mid, width - 58, mid, 'rgba(139,164,176,.55)', 2, [5, 7]);
@@ -826,21 +826,22 @@ function drawBiology(ctx, width, height, time, params = {}) {
 function drawBiologyCell(ctx, width, height, time, params = {}) {
   const phase = Math.max(1, Math.min(5, Math.round(Number(params.cellPhase ?? 2))));
   const cx = width * 0.52, cy = height * 0.53;
-  circle(ctx, cx, cy, 178, 'rgba(82,154,143,.14)', '#8abeb0', 4);
-  circle(ctx, cx, cy, 118, 'rgba(115,161,189,.15)', '#a2c4ce', 2);
-  const split = phase >= 4;
+  const focus = ['membrane', 'nucleus', 'mitochondrion', 'cytoplasm', 'division'][phase - 1];
+  const split = phase === 5;
+  circle(ctx, cx, cy, 178, 'rgba(82,154,143,.14)', focus === 'membrane' ? '#f0c27e' : '#8abeb0', focus === 'membrane' ? 7 : 4);
+  circle(ctx, cx, cy, 118, focus === 'cytoplasm' ? 'rgba(115,161,189,.3)' : 'rgba(115,161,189,.15)', focus === 'cytoplasm' ? '#f0c27e' : '#a2c4ce', focus === 'cytoplasm' ? 4 : 2);
   const nucleusX = cx + (split ? Math.sin(time * 1.2) * 44 : 0);
-  circle(ctx, nucleusX, cy, 38, '#e7b876', '#f5d9a8', 2);
+  circle(ctx, nucleusX, cy, focus === 'nucleus' ? 46 : 38, '#e7b876', focus === 'nucleus' || split ? '#fff0c9' : '#f5d9a8', focus === 'nucleus' || split ? 4 : 2);
   const organelles = [[-115,-70], [106,-77], [120,73], [-104,91], [0,-138], [0,138]];
-  organelles.forEach(([dx, dy], i) => circle(ctx, cx + dx + Math.sin(time + i) * 4, cy + dy, 10, '#94c7b9'));
+  organelles.forEach(([dx, dy], i) => circle(ctx, cx + dx + Math.sin(time + i) * 4, cy + dy, focus === 'mitochondrion' && i === 1 ? 16 : 10, '#94c7b9', focus === 'mitochondrion' && i === 1 ? '#fff0c9' : '#d8eee3', focus === 'mitochondrion' && i === 1 ? 3 : 1));
   arrow(ctx, cx - 24, cy + 14, cx - 70, cy + 40, '#e9bd7e', 2);
   arrow(ctx, cx + 111, cy - 70, cx + 173, cy - 111, '#9dcac0', 2);
   arrow(ctx, cx - 113, cy - 67, cx - 184, cy - 103, '#9dcac0', 2);
   label(ctx, 'nucleus', cx - 112, cy + 63, 12, '#f0c27e', 600);
   label(ctx, 'mitochondrion', cx + 177, cy - 111, 11, '#b8d2d2', 600);
   label(ctx, 'membrane', cx - 251, cy - 113, 11, '#b8d2d2', 600);
-  label(ctx, `Cell structure  ·  phase ${phase}`, 65, 69, 18, '#dbe9e8', 600);
-  label(ctx, split ? 'Nuclear material is separating in this illustrative stage' : 'The cell membrane surrounds the cell contents', 65, height - 32, 14, '#92aeb6');
+  label(ctx, `Focus: ${focus}  ·  stage ${phase} of 5`, 65, 69, 18, '#dbe9e8', 600);
+  label(ctx, split ? 'Illustrative division stage: nuclear material is separating' : `${focus[0].toUpperCase()}${focus.slice(1)} highlighted in this simplified cell model`, 65, height - 32, 14, '#92aeb6');
 }
 
 function drawBiologyCycle(ctx, width, height, time, params = {}, simulation = {}) {

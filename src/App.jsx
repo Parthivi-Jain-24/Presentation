@@ -7,6 +7,7 @@ import {
   Trash2, UploadCloud, X,
 } from 'lucide-react';
 import SimulationPlayer from './components/SimulationPlayer.jsx';
+import SimulationLab from './components/SimulationLab.jsx';
 import { demoLesson, sampleLessons } from './data/lesson.js';
 import { api, setAccessToken } from './lib/api.js';
 import { getSubjectTheme, isBiologySubject, normalizeSubject } from './lib/subjectTheme.js';
@@ -240,7 +241,7 @@ function IconButton({ children, onClick, title, className = '', disabled = false
   return <button className={`icon-button ${className}`} title={title} aria-label={title} onClick={onClick} disabled={disabled}>{children}</button>;
 }
 
-function Sidebar({ onNewLesson, onOpenHelp, onOpenLibrary, onOpenCurriculum, recentLessons, activeLessonId, currentLesson, onSelectRecent, currentUser, onSignOut }) {
+function Sidebar({ onNewLesson, onOpenHelp, onOpenLibrary, onOpenCurriculum, onOpenSimulations, recentLessons, activeLessonId, currentLesson, onSelectRecent, currentUser, onSignOut }) {
   const [active, setActive] = useState('Studio');
   const recent = [
     { id: activeLessonId, lesson: currentLesson },
@@ -261,6 +262,7 @@ function Sidebar({ onNewLesson, onOpenHelp, onOpenLibrary, onOpenCurriculum, rec
       <div className="side-section-label">WORKSPACE</div>
       <nav className="side-nav" aria-label="Workspace">
         <button className={`side-nav-item ${active === 'Studio' ? 'active' : ''}`} onClick={() => setActive('Studio')}><Clapperboard size={17} /><span>Lesson studio</span><span className="nav-shortcut">⌘ 1</span></button>
+        <button className={`side-nav-item ${active === 'Simulations' ? 'active' : ''}`} onClick={() => { setActive('Simulations'); onOpenSimulations(); }}><Sparkles size={17} /><span>Simulation lab</span></button>
         <button className="side-nav-item" onClick={onOpenLibrary}><Layers2 size={17} /><span>My lessons</span><span className="nav-count">{recentLessons.length}</span></button>
         <button className="side-nav-item" onClick={onOpenCurriculum}><GraduationCap size={17} /><span>Curriculum map</span></button>
       </nav>
@@ -282,13 +284,14 @@ function Sidebar({ onNewLesson, onOpenHelp, onOpenLibrary, onOpenCurriculum, rec
   );
 }
 
-function AppHeader({ onNewLesson, onExport, onPresent, onUndo, onRedo, canUndo, canRedo, exporting, syncLabel }) {
+function AppHeader({ onNewLesson, onOpenSimulations, onExport, onPresent, onUndo, onRedo, canUndo, canRedo, exporting, syncLabel }) {
   return (
     <header className="app-header">
       <div className="breadcrumbs"><span>My workspace</span><ChevronRight size={14} /><strong>Lesson studio</strong></div>
       <div className="header-actions">
         <span className="save-state"><span className="save-indicator"><Check size={11} /></span>{syncLabel}</span>
         <button className="header-button" onClick={onNewLesson}><Plus size={15} /> New lesson</button>
+        <button className="header-button simlab-header-button" onClick={onOpenSimulations} aria-label="Open simulation lab"><Sparkles size={15} /><span>Simulation lab</span></button>
         <button className="header-button present-button" onClick={onPresent}><Play size={14} fill="currentColor" /> Present</button>
         <button className="export-button" onClick={onExport} disabled={exporting}>
           {exporting ? <span className="spinner" /> : <ArrowDownToLine size={15} />}
@@ -1216,9 +1219,9 @@ export default function App() {
 
   return (
     <div className="app-shell">
-      <Sidebar onNewLesson={() => setDialog('new')} onOpenHelp={() => setDialog('help')} onOpenLibrary={() => setDialog('library')} onOpenCurriculum={() => setDialog('curriculum')} recentLessons={recentLessons} activeLessonId={activeLessonId} currentLesson={lesson} onSelectRecent={openRecentLesson} currentUser={currentUser} onSignOut={handleSignOut} />
+      <Sidebar onNewLesson={() => setDialog('new')} onOpenHelp={() => setDialog('help')} onOpenLibrary={() => setDialog('library')} onOpenCurriculum={() => setDialog('curriculum')} onOpenSimulations={() => setDialog('simulations')} recentLessons={recentLessons} activeLessonId={activeLessonId} currentLesson={lesson} onSelectRecent={openRecentLesson} currentUser={currentUser} onSignOut={handleSignOut} />
       <main className="main-panel">
-        <AppHeader onNewLesson={() => setDialog('new')} onExport={handleExport} onPresent={() => setDialog('present')} onUndo={undo} onRedo={redo} canUndo={undoStack.length > 0} canRedo={redoStack.length > 0} exporting={exporting || (jobStatus?.kind === 'export' && ['queued', 'processing', 'retrying'].includes(jobStatus.state))} syncLabel={activeLessonId.startsWith('sample-') ? 'Sample · edits are temporary' : jobStatus?.state === 'failed' ? 'Lesson generation failed' : jobStatus?.kind === 'export' && jobStatus.state === 'succeeded' ? 'PowerPoint ready' : jobStatus ? `${jobStatus.kind === 'lesson' ? 'Creating lesson' : 'Rendering PPTX'} · ${jobStatus.progress}%` : syncLabel} />
+        <AppHeader onNewLesson={() => setDialog('new')} onOpenSimulations={() => setDialog('simulations')} onExport={handleExport} onPresent={() => setDialog('present')} onUndo={undo} onRedo={redo} canUndo={undoStack.length > 0} canRedo={redoStack.length > 0} exporting={exporting || (jobStatus?.kind === 'export' && ['queued', 'processing', 'retrying'].includes(jobStatus.state))} syncLabel={activeLessonId.startsWith('sample-') ? 'Sample · edits are temporary' : jobStatus?.state === 'failed' ? 'Lesson generation failed' : jobStatus?.kind === 'export' && jobStatus.state === 'succeeded' ? 'PowerPoint ready' : jobStatus ? `${jobStatus.kind === 'lesson' ? 'Creating lesson' : 'Rendering PPTX'} · ${jobStatus.progress}%` : syncLabel} />
         <div className="workspace-body">
           <section className="lesson-header-row"><LessonHeading lesson={lesson} onEditTitle={setTitle} /><button className="coverage-chip" onClick={() => setDialog('curriculum')}><span className="coverage-arc"><FileText size={14} /></span><span><small>CHAPTER COVERAGE</small><strong>{lesson.chapterCoverage ? `${lesson.chapterCoverage.representedReadablePages}/${lesson.chapterCoverage.readablePages} readable pages mapped` : `${lesson.pages} source pages`}</strong></span><ChevronDown size={13} /></button></section>
           {jobStatus && ['queued', 'processing', 'retrying'].includes(jobStatus.state) && <div className="job-progress-card" role="status" aria-live="polite">
@@ -1257,6 +1260,7 @@ export default function App() {
       {dialog === 'library' && <LibraryDialog currentLesson={lesson} activeLessonId={activeLessonId} recentLessons={recentLessons} presentationJobs={presentationJobs} onClose={() => setDialog(null)} onSelect={openRecentLesson} onPresent={presentRecentLesson} onDownload={(jobId, item) => downloadPowerPoint(jobId, item).catch((error) => setNotice(error.message || 'The saved PowerPoint could not be downloaded.'))} />}
       {dialog === 'curriculum' && <CurriculumDialog lesson={lesson} onClose={() => setDialog(null)} />}
       {dialog === 'present' && <PresentMode lesson={lesson} sourceImages={sourceImages} activeIndex={activeIndex} setActiveIndex={setActiveIndex} onClose={() => setDialog(null)} progress={simulationProgress} playing={playing} onPlayingChange={setPlaying} onProgressChange={setSimulationProgress} params={simulationParams} onParamsChange={setSimulationParams} />}
+      {dialog === 'simulations' && <SimulationLab onClose={() => setDialog(null)} />}
       {notice && <div className={`toast-message ${jobStatus?.state === 'failed' ? 'error' : ''}`} role={jobStatus?.state === 'failed' ? 'alert' : 'status'}><span className="toast-indicator">{jobStatus?.state === 'failed' ? <CircleHelp size={13} /> : <Check size={12} />}</span><span>{notice}</span>{jobStatus?.state === 'failed' && <button className="toast-dismiss" aria-label="Dismiss error" onClick={() => { setNotice(''); setJobStatus(null); }}><X size={14} /></button>}</div>}
     </div>
   );
