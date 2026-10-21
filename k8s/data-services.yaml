@@ -1,0 +1,129 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: ollama
+  namespace: classroom-studio
+spec:
+  selector: { app: ollama }
+  ports: [{ name: http, port: 11434, targetPort: 11434 }]
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: ollama-data
+  namespace: classroom-studio
+spec:
+  accessModes: [ReadWriteOnce]
+  resources: { requests: { storage: 15Gi } }
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: ollama
+  namespace: classroom-studio
+spec:
+  serviceName: ollama
+  replicas: 1
+  selector: { matchLabels: { app: ollama } }
+  template:
+    metadata: { labels: { app: ollama } }
+    spec:
+      terminationGracePeriodSeconds: 60
+      containers:
+        - name: ollama
+          image: ollama/ollama
+          command: ["/bin/sh", "-c"]
+          args:
+            - |
+              ollama serve &
+              server_pid=$!
+              until ollama list >/dev/null 2>&1; do sleep 2; done
+              if ! ollama pull "$OLLAMA_MODEL"; then kill "$server_pid"; exit 1; fi
+              wait "$server_pid"
+          env:
+            - { name: OLLAMA_HOST, value: "0.0.0.0:11434" }
+            - { name: OLLAMA_MODEL, valueFrom: { configMapKeyRef: { name: classroom-config, key: OLLAMA_MODEL } } }
+          ports: [{ containerPort: 11434 }]
+          readinessProbe: { exec: { command: ["/bin/sh", "-c", "ollama show \"$OLLAMA_MODEL\" >/dev/null 2>&1"] }, initialDelaySeconds: 10, periodSeconds: 10 }
+          livenessProbe: { exec: { command: ["ollama", "ps"] }, initialDelaySeconds: 30, periodSeconds: 30 }
+          resources: { requests: { cpu: "1", memory: 6Gi }, limits: { cpu: "4", memory: 10Gi } }
+          volumeMounts: [{ name: data, mountPath: /root/.ollama }]
+      volumes: [{ name: data, persistentVolumeClaim: { claimName: ollama-data } }]
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: postgres
+  namespace: classroom-studio
+spec:
+  selector: { app: postgres }
+  ports: [{ name: postgres, port: 5432, targetPort: 5432 }]
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: postgres-data
+  namespace: classroom-studio
+spec:
+  accessModes: [ReadWriteOnce]
+  resources: { requests: { storage: 20Gi } }
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: postgres
+  namespace: classroom-studio
+spec:
+  serviceName: postgres
+  replicas: 1
+  selector: { matchLabels: { app: postgres } }
+  template:
+    metadata: { labels: { app: postgres } }
+    spec:
+      containers:
+        - name: postgres
+          image: postgres:17.4-alpine
+          env:
+            - { name: POSTGRES_DB, value: classroom }
+            - { name: POSTGRES_USER, value: classroom }
+            - { name: POSTGRES_PASSWORD, valueFrom: { secretKeyRef: { name: classroom-secrets, key: POSTGRES_PASSWORD } } }
+          ports: [{ containerPort: 5432 }]
+          volumeMounts: [{ name: data, mountPath: /var/lib/postgresql/data }]
+          readinessProbe: { exec: { command: ["sh", "-c", "pg_isready -U classroom -d classroom"] }, initialDelaySeconds: 8, periodSeconds: 10 }
+          resources: { requests: { cpu: 250m, memory: 512Mi }, limits: { cpu: "2", memory: 2Gi } }
+      volumes: [{ name: data, persistentVolumeClaim: { claimName: postgres-data } }]
+---
+apiVersion: v1
+kind: Service
+metadata: { name: redis, namespace: classroom-studio }
+spec:
+  selector: { app: redis }
+  ports: [{ name: redis, port: 6379, targetPort: 6379 }]
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata: { name: redis, namespace: classroom-studio }
+spec:
+  serviceName: redis
+  replicas: 1
+  selector: { matchLabels: { app: redis } }
+  template:
+    metadata: { labels: { app: redis } }
+    spec:
+      containers:
+        - name: redis
+          image: redis:7.4.2-alpine
+          command: ["/bin/sh", "-c"]
+          args: ["exec redis-server --appendonly yes --maxmemory 512mb --maxmemory-policy noeviction --requirepass \"$REDIS_PASSWORD\""]
+          env:
+            - { name: REDIS_PASSWORD, valueFrom: { secretKeyRef: { name: classroom-secrets, key: REDIS_PASSWORD } } }
+            - { name: REDISCLI_AUTH, valueFrom: { secretKeyRef: { name: classroom-secrets, key: REDIS_PASSWORD } } }
+          ports: [{ containerPort: 6379 }]
+          readinessProbe: { exec: { command: ["redis-cli", "ping"] }, initialDelaySeconds: 5, periodSeconds: 10 }
+          resources: { requests: { cpu: 100m, memory: 256Mi }, limits: { cpu: "1", memory: 1Gi } }
+          volumeMounts: [{ name: data, mountPath: /data }]
+  volumeClaimTemplates:
+    - metadata: { name: data }
+      spec:
+        accessModes: [ReadWriteOnce]
+        resources: { requests: { storage: 2Gi } }

@@ -1,0 +1,25 @@
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: classroom-migrate
+  namespace: classroom-studio
+spec:
+  backoffLimit: 2
+  template:
+    metadata: { labels: { app: migrate } }
+    spec:
+      restartPolicy: Never
+      securityContext: { runAsNonRoot: true, runAsUser: 10001, runAsGroup: 10001, fsGroup: 10001, seccompProfile: { type: RuntimeDefault } }
+      containers:
+        - name: migrate
+          image: classroom-api:REPLACE_WITH_RELEASE_TAG
+          command: ["alembic", "upgrade", "head"]
+          envFrom: [{ configMapRef: { name: classroom-config } }]
+          env:
+            - { name: APP_SECRET, valueFrom: { secretKeyRef: { name: classroom-secrets, key: APP_SECRET } } }
+            - { name: POSTGRES_PASSWORD, valueFrom: { secretKeyRef: { name: classroom-secrets, key: POSTGRES_PASSWORD } } }
+            - { name: DATABASE_URL, value: "postgresql+psycopg://classroom:$(POSTGRES_PASSWORD)@postgres:5432/classroom" }
+          resources: { requests: { cpu: 100m, memory: 256Mi }, limits: { cpu: "1", memory: 1Gi } }
+          securityContext: { allowPrivilegeEscalation: false, readOnlyRootFilesystem: true, capabilities: { drop: [ALL] } }
+          volumeMounts: [{ name: tmp, mountPath: /tmp }]
+      volumes: [{ name: tmp, emptyDir: { sizeLimit: 256Mi } }]

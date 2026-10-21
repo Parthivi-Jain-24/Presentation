@@ -1,0 +1,146 @@
+name: classroom-studio
+x-app-env: &app-env
+  APP_ENV: ${APP_ENV:-development}
+  APP_SECRET: ${APP_SECRET:-local-only-change-before-deployment-9c761b22a4f0}
+  DATABASE_URL: postgresql+psycopg://classroom:${POSTGRES_PASSWORD:-local-development-only}@postgres:5432/classroom
+  REDIS_URL: redis://redis:6379/0
+  STORAGE_BACKEND: local
+  STORAGE_PATH: /var/lib/classroom/files
+  ALLOWED_ORIGINS: http://localhost:8080,http://localhost:5173
+  OLLAMA_BASE_URL: ${OLLAMA_BASE_URL:-http://ollama:11434}
+  OLLAMA_MODEL: ${OLLAMA_MODEL:-qwen3:1.7b}
+  OLLAMA_NUM_CTX: ${OLLAMA_NUM_CTX:-4096}
+  MAX_MODEL_INPUT_CHARS: ${MAX_MODEL_INPUT_CHARS:-24000}
+  LESSON_GENERATION_MODE: ${LESSON_GENERATION_MODE:-model}
+  EXPORTER_URL: http://exporter:8082
+  CURRICULUM_IMPORT_TOKEN: ${CURRICULUM_IMPORT_TOKEN:-}
+  FEEDBACK_ADMIN_TOKEN: ${FEEDBACK_ADMIN_TOKEN:-}
+services:
+  ollama:
+    image: ollama/ollama
+    environment:
+      OLLAMA_HOST: 0.0.0.0:11434
+    volumes: ["ollama-data:/root/.ollama"]
+    healthcheck:
+      test: ["CMD-SHELL", "ollama list >/dev/null 2>&1"]
+      interval: 5s
+      timeout: 5s
+      retries: 30
+    restart: unless-stopped
+  ollama-model:
+    image: ollama/ollama
+    entrypoint: ["/bin/sh", "-c"]
+    command: ["ollama pull \"$$OLLAMA_MODEL\""]
+    environment:
+      OLLAMA_HOST: http://ollama:11434
+      OLLAMA_MODEL: ${OLLAMA_MODEL:-qwen3:1.7b}
+    depends_on:
+      ollama: { condition: service_healthy }
+    restart: "no"
+  postgres:
+    image: postgres:17.4-alpine
+    environment:
+      POSTGRES_DB: classroom
+      POSTGRES_USER: classroom
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-local-development-only}
+    volumes: ["postgres-data:/var/lib/postgresql/data"]
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U classroom -d classroom"]
+      interval: 5s
+      timeout: 3s
+      retries: 15
+    restart: unless-stopped
+  redis:
+    image: redis:7.4.2-alpine
+    command: ["redis-server", "--appendonly", "yes", "--maxmemory", "256mb", "--maxmemory-policy", "noeviction"]
+    volumes: ["redis-data:/data"]
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 15
+    restart: unless-stopped
+  migrate:
+    build: ./backend
+    command: ["alembic", "upgrade", "head"]
+    environment: *app-env
+    depends_on:
+      postgres: { condition: service_healthy }
+    restart: "no"
+  reference-import:
+    build: ./backend
+    command: ["python", "-m", "app.import_reference_corpus"]
+    environment:
+      <<: *app-env
+      REFERENCE_PDF_ROOT: /reference-data
+    volumes:
+      - "./data:/reference-data:ro"
+      - "uploads:/var/lib/classroom/files"
+    depends_on:
+      postgres: { condition: service_healthy }
+      migrate: { condition: service_completed_successfully }
+    restart: "no"
+  api:
+    build: ./backend
+    command: ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000", "--workers", "2"]
+    environment: *app-env
+    ports: ["127.0.0.1:8000:8000"]
+    volumes: ["uploads:/var/lib/classroom/files"]
+    depends_on:
+      postgres: { condition: service_healthy }
+      redis: { condition: service_healthy }
+      migrate: { condition: service_completed_successfully }
+      reference-import: { condition: service_completed_successfully }
+      ollama-model: { condition: service_completed_successfully }
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/health/ready', timeout=2)"]
+      interval: 10s
+      timeout: 3s
+      retries: 12
+    restart: unless-stopped
+  worker:
+    build: ./backend
+    command: ["celery", "-A", "app.queue:celery_app", "worker", "--loglevel=INFO", "--concurrency=1", "--queues=documents"]
+    environment: *app-env
+    volumes: ["uploads:/var/lib/classroom/files"]
+    depends_on:
+      api: { condition: service_healthy }
+      redis: { condition: service_healthy }
+      exporter: { condition: service_healthy }
+      ollama-model: { condition: service_completed_successfully }
+    init: true
+    restart: unless-stopped
+    stop_grace_period: 30s
+  beat:
+    build: ./backend
+    command: ["celery", "-A", "app.queue:celery_app", "beat", "--loglevel=INFO", "--schedule=/tmp/celerybeat-schedule"]
+    environment: *app-env
+    volumes: ["uploads:/var/lib/classroom/files"]
+    depends_on:
+      api: { condition: service_healthy }
+      redis: { condition: service_healthy }
+    restart: unless-stopped
+  exporter:
+    build:
+      context: .
+      dockerfile: exporter/Dockerfile
+    expose: ["8082"]
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://localhost:8082/health/ready').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
+      interval: 10s
+      timeout: 3s
+      retries: 12
+    restart: unless-stopped
+  web:
+    build:
+      context: .
+      dockerfile: Dockerfile.web
+    ports: ["${PORT:-8080}:8080"]
+    depends_on:
+      api: { condition: service_healthy }
+    restart: unless-stopped
+volumes:
+  postgres-data:
+  redis-data:
+  uploads:
+  ollama-data:

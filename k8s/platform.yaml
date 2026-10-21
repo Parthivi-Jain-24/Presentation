@@ -1,0 +1,196 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata: { name: api, namespace: classroom-studio }
+spec:
+  replicas: 2
+  selector: { matchLabels: { app: api } }
+  template:
+    metadata: { labels: { app: api } }
+    spec:
+      securityContext: { runAsNonRoot: true, runAsUser: 10001, runAsGroup: 10001, fsGroup: 10001, seccompProfile: { type: RuntimeDefault } }
+      containers:
+        - name: api
+          image: classroom-api:REPLACE_WITH_RELEASE_TAG
+          command: ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000", "--workers", "2"]
+          envFrom: [{ configMapRef: { name: classroom-config } }]
+          env:
+            - { name: APP_SECRET, valueFrom: { secretKeyRef: { name: classroom-secrets, key: APP_SECRET } } }
+            - { name: POSTGRES_PASSWORD, valueFrom: { secretKeyRef: { name: classroom-secrets, key: POSTGRES_PASSWORD } } }
+            - { name: DATABASE_URL, value: "postgresql+psycopg://classroom:$(POSTGRES_PASSWORD)@postgres:5432/classroom" }
+            - { name: REDIS_PASSWORD, valueFrom: { secretKeyRef: { name: classroom-secrets, key: REDIS_PASSWORD } } }
+            - { name: REDIS_URL, value: "redis://:$(REDIS_PASSWORD)@redis:6379/0" }
+            - { name: S3_ACCESS_KEY, valueFrom: { secretKeyRef: { name: classroom-secrets, key: S3_ACCESS_KEY, optional: true } } }
+            - { name: S3_SECRET_KEY, valueFrom: { secretKeyRef: { name: classroom-secrets, key: S3_SECRET_KEY, optional: true } } }
+            - { name: CURRICULUM_IMPORT_TOKEN, valueFrom: { secretKeyRef: { name: classroom-secrets, key: CURRICULUM_IMPORT_TOKEN, optional: true } } }
+            - { name: FEEDBACK_ADMIN_TOKEN, valueFrom: { secretKeyRef: { name: classroom-secrets, key: FEEDBACK_ADMIN_TOKEN, optional: true } } }
+          ports: [{ containerPort: 8000 }]
+          readinessProbe: { httpGet: { path: /health/ready, port: 8000 }, initialDelaySeconds: 10, periodSeconds: 10 }
+          livenessProbe: { httpGet: { path: /health/live, port: 8000 }, initialDelaySeconds: 15, periodSeconds: 20 }
+          resources: { requests: { cpu: 250m, memory: 512Mi }, limits: { cpu: "2", memory: 2Gi } }
+          securityContext: { allowPrivilegeEscalation: false, readOnlyRootFilesystem: true, capabilities: { drop: [ALL] } }
+          volumeMounts: [{ name: tmp, mountPath: /tmp }]
+      volumes: [{ name: tmp, emptyDir: { sizeLimit: 1Gi } }]
+---
+apiVersion: v1
+kind: Service
+metadata: { name: api, namespace: classroom-studio }
+spec:
+  selector: { app: api }
+  ports: [{ name: http, port: 8000, targetPort: 8000 }]
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata: { name: worker, namespace: classroom-studio }
+spec:
+  replicas: 1
+  selector: { matchLabels: { app: worker } }
+  template:
+    metadata: { labels: { app: worker } }
+    spec:
+      terminationGracePeriodSeconds: 45
+      securityContext: { runAsNonRoot: true, runAsUser: 10001, runAsGroup: 10001, fsGroup: 10001, seccompProfile: { type: RuntimeDefault } }
+      containers:
+        - name: worker
+          image: classroom-api:REPLACE_WITH_RELEASE_TAG
+          command: ["celery", "-A", "app.queue:celery_app", "worker", "--loglevel=INFO", "--concurrency=1", "--queues=documents"]
+          envFrom: [{ configMapRef: { name: classroom-config } }]
+          env:
+            - { name: APP_SECRET, valueFrom: { secretKeyRef: { name: classroom-secrets, key: APP_SECRET } } }
+            - { name: POSTGRES_PASSWORD, valueFrom: { secretKeyRef: { name: classroom-secrets, key: POSTGRES_PASSWORD } } }
+            - { name: DATABASE_URL, value: "postgresql+psycopg://classroom:$(POSTGRES_PASSWORD)@postgres:5432/classroom" }
+            - { name: REDIS_PASSWORD, valueFrom: { secretKeyRef: { name: classroom-secrets, key: REDIS_PASSWORD } } }
+            - { name: REDIS_URL, value: "redis://:$(REDIS_PASSWORD)@redis:6379/0" }
+            - { name: S3_ACCESS_KEY, valueFrom: { secretKeyRef: { name: classroom-secrets, key: S3_ACCESS_KEY, optional: true } } }
+            - { name: S3_SECRET_KEY, valueFrom: { secretKeyRef: { name: classroom-secrets, key: S3_SECRET_KEY, optional: true } } }
+          resources: { requests: { cpu: 500m, memory: 1Gi }, limits: { cpu: "3", memory: 4Gi } }
+          securityContext: { allowPrivilegeEscalation: false, readOnlyRootFilesystem: true, capabilities: { drop: [ALL] } }
+          volumeMounts: [{ name: tmp, mountPath: /tmp }]
+      volumes: [{ name: tmp, emptyDir: { sizeLimit: 2Gi } }]
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata: { name: exporter, namespace: classroom-studio }
+spec:
+  replicas: 2
+  selector: { matchLabels: { app: exporter } }
+  template:
+    metadata: { labels: { app: exporter } }
+    spec:
+      securityContext: { runAsNonRoot: true, runAsUser: 1000, runAsGroup: 1000, seccompProfile: { type: RuntimeDefault } }
+      containers:
+        - name: exporter
+          image: classroom-exporter:REPLACE_WITH_RELEASE_TAG
+          ports: [{ containerPort: 8082 }]
+          readinessProbe: { httpGet: { path: /health/ready, port: 8082 }, initialDelaySeconds: 5, periodSeconds: 10 }
+          resources: { requests: { cpu: 250m, memory: 512Mi }, limits: { cpu: "2", memory: 2Gi } }
+          securityContext: { allowPrivilegeEscalation: false, readOnlyRootFilesystem: true, capabilities: { drop: [ALL] } }
+---
+apiVersion: v1
+kind: Service
+metadata: { name: exporter, namespace: classroom-studio }
+spec:
+  selector: { app: exporter }
+  ports: [{ name: http, port: 8082, targetPort: 8082 }]
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata: { name: web, namespace: classroom-studio }
+spec:
+  replicas: 2
+  selector: { matchLabels: { app: web } }
+  template:
+    metadata: { labels: { app: web } }
+    spec:
+      securityContext: { runAsNonRoot: true, runAsUser: 101, runAsGroup: 101, fsGroup: 101, seccompProfile: { type: RuntimeDefault } }
+      containers:
+        - name: web
+          image: classroom-web:REPLACE_WITH_RELEASE_TAG
+          ports: [{ containerPort: 8080 }]
+          readinessProbe: { httpGet: { path: /health/live, port: 8080 }, initialDelaySeconds: 5, periodSeconds: 10 }
+          resources: { requests: { cpu: 100m, memory: 128Mi }, limits: { cpu: "1", memory: 512Mi } }
+          securityContext: { allowPrivilegeEscalation: false, readOnlyRootFilesystem: true, capabilities: { drop: [ALL] } }
+          volumeMounts: [{ name: tmp, mountPath: /tmp }]
+      volumes: [{ name: tmp, emptyDir: { sizeLimit: 256Mi } }]
+---
+apiVersion: v1
+kind: Service
+metadata: { name: web, namespace: classroom-studio }
+spec:
+  selector: { app: web }
+  ports: [{ name: http, port: 80, targetPort: 8080 }]
+---
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: classroom
+  namespace: classroom-studio
+  annotations:
+    nginx.ingress.kubernetes.io/proxy-body-size: 52m
+    nginx.ingress.kubernetes.io/proxy-read-timeout: "60"
+spec:
+  ingressClassName: nginx
+  tls:
+    - hosts: [classroom.example.com]
+      secretName: classroom-tls
+  rules:
+    - host: classroom.example.com
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend: { service: { name: web, port: { number: 80 } } }
+---
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata: { name: classroom-api, namespace: classroom-studio }
+spec:
+  scaleTargetRef: { apiVersion: apps/v1, kind: Deployment, name: api }
+  minReplicas: 2
+  maxReplicas: 10
+  metrics:
+    - type: Resource
+      resource:
+        name: cpu
+        target:
+          type: Utilization
+          averageUtilization: 70
+---
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata: { name: classroom-worker, namespace: classroom-studio }
+spec:
+  scaleTargetRef: { apiVersion: apps/v1, kind: Deployment, name: worker }
+  minReplicas: 1
+  maxReplicas: 20
+  metrics:
+    - type: Resource
+      resource:
+        name: cpu
+        target:
+          type: Utilization
+          averageUtilization: 70
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata: { name: beat, namespace: classroom-studio }
+spec:
+  replicas: 1
+  selector: { matchLabels: { app: beat } }
+  template:
+    metadata: { labels: { app: beat } }
+    spec:
+      terminationGracePeriodSeconds: 30
+      securityContext: { runAsNonRoot: true, runAsUser: 10001, runAsGroup: 10001, fsGroup: 10001, seccompProfile: { type: RuntimeDefault } }
+      containers:
+        - name: beat
+          image: classroom-api:REPLACE_WITH_RELEASE_TAG
+          command: ["celery", "-A", "app.queue:celery_app", "beat", "--loglevel=INFO", "--schedule=/tmp/celerybeat-schedule"]
+          envFrom: [{ configMapRef: { name: classroom-config } }]
+          env:
+            - { name: APP_SECRET, valueFrom: { secretKeyRef: { name: classroom-secrets, key: APP_SECRET } } }
+            - { name: REDIS_PASSWORD, valueFrom: { secretKeyRef: { name: classroom-secrets, key: REDIS_PASSWORD } } }
+            - { name: REDIS_URL, value: "redis://:$(REDIS_PASSWORD)@redis:6379/0" }
+          resources: { requests: { cpu: 100m, memory: 256Mi }, limits: { cpu: "1", memory: 512Mi } }
+          securityContext: { allowPrivilegeEscalation: false, readOnlyRootFilesystem: true, capabilities: { drop: [ALL] } }
+          volumeMounts: [{ name: tmp, mountPath: /tmp }]
+      volumes: [{ name: tmp, emptyDir: { sizeLimit: 256Mi } }]

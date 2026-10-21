@@ -1,0 +1,19 @@
+node_modules/
+dist/
+.env
+.env.*
+!.env.example
+*.pptx
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+.pytest_cache/
+.mypy_cache/
+celerybeat-schedule
+# Local reference PDFs and generated files
+/data/
+/tmp/
+/output/
+/outputs/
+/.codex-build/

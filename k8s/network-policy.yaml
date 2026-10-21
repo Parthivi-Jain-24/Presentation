@@ -1,0 +1,128 @@
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata: { name: default-deny, namespace: classroom-studio }
+spec:
+  podSelector: {}
+  policyTypes: [Ingress, Egress]
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata: { name: allow-dns, namespace: classroom-studio }
+spec:
+  podSelector: {}
+  policyTypes: [Egress]
+  egress:
+    - to: [{ namespaceSelector: { matchLabels: { kubernetes.io/metadata.name: kube-system } }, podSelector: { matchLabels: { k8s-app: kube-dns } } }]
+      ports: [{ protocol: UDP, port: 53 }, { protocol: TCP, port: 53 }]
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata: { name: api-access, namespace: classroom-studio }
+spec:
+  podSelector: { matchLabels: { app: api } }
+  policyTypes: [Ingress, Egress]
+  ingress:
+    - from: [{ podSelector: { matchLabels: { app: web } } }]
+      ports: [{ protocol: TCP, port: 8000 }]
+  egress:
+    - to: [{ podSelector: { matchLabels: { app: postgres } } }]
+      ports: [{ protocol: TCP, port: 5432 }]
+    - to: [{ podSelector: { matchLabels: { app: redis } } }]
+      ports: [{ protocol: TCP, port: 6379 }]
+    - to: [{ podSelector: { matchLabels: { app: ollama } } }]
+      ports: [{ protocol: TCP, port: 11434 }]
+    - ports: [{ protocol: TCP, port: 443 }]
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata: { name: worker-access, namespace: classroom-studio }
+spec:
+  podSelector: { matchLabels: { app: worker } }
+  policyTypes: [Ingress, Egress]
+  egress:
+    - to: [{ podSelector: { matchLabels: { app: postgres } } }]
+      ports: [{ protocol: TCP, port: 5432 }]
+    - to: [{ podSelector: { matchLabels: { app: redis } } }]
+      ports: [{ protocol: TCP, port: 6379 }]
+    - to: [{ podSelector: { matchLabels: { app: exporter } } }]
+      ports: [{ protocol: TCP, port: 8082 }]
+    - to: [{ podSelector: { matchLabels: { app: ollama } } }]
+      ports: [{ protocol: TCP, port: 11434 }]
+    - ports: [{ protocol: TCP, port: 443 }]
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata: { name: ollama-access, namespace: classroom-studio }
+spec:
+  podSelector: { matchLabels: { app: ollama } }
+  policyTypes: [Ingress, Egress]
+  ingress:
+    - from: [{ podSelector: { matchLabels: { app: api } } }, { podSelector: { matchLabels: { app: worker } } }]
+      ports: [{ protocol: TCP, port: 11434 }]
+  egress:
+    - ports: [{ protocol: TCP, port: 443 }]
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata: { name: beat-access, namespace: classroom-studio }
+spec:
+  podSelector: { matchLabels: { app: beat } }
+  policyTypes: [Ingress, Egress]
+  egress:
+    - to: [{ podSelector: { matchLabels: { app: redis } } }]
+      ports: [{ protocol: TCP, port: 6379 }]
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata: { name: migration-access, namespace: classroom-studio }
+spec:
+  podSelector: { matchLabels: { app: migrate } }
+  policyTypes: [Ingress, Egress]
+  egress:
+    - to: [{ podSelector: { matchLabels: { app: postgres } } }]
+      ports: [{ protocol: TCP, port: 5432 }]
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata: { name: postgres-access, namespace: classroom-studio }
+spec:
+  podSelector: { matchLabels: { app: postgres } }
+  policyTypes: [Ingress]
+  ingress:
+    - from: [{ podSelector: { matchLabels: { app: api } } }, { podSelector: { matchLabels: { app: worker } } }, { podSelector: { matchLabels: { app: migrate } } }]
+      ports: [{ protocol: TCP, port: 5432 }]
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata: { name: redis-access, namespace: classroom-studio }
+spec:
+  podSelector: { matchLabels: { app: redis } }
+  policyTypes: [Ingress]
+  ingress:
+    - from: [{ podSelector: { matchLabels: { app: api } } }, { podSelector: { matchLabels: { app: worker } } }, { podSelector: { matchLabels: { app: beat } } }]
+      ports: [{ protocol: TCP, port: 6379 }]
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata: { name: exporter-access, namespace: classroom-studio }
+spec:
+  podSelector: { matchLabels: { app: exporter } }
+  policyTypes: [Ingress, Egress]
+  ingress:
+    - from: [{ podSelector: { matchLabels: { app: worker } } }]
+      ports: [{ protocol: TCP, port: 8082 }]
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata: { name: web-access, namespace: classroom-studio }
+spec:
+  podSelector: { matchLabels: { app: web } }
+  policyTypes: [Ingress, Egress]
+  ingress:
+    - from:
+        - namespaceSelector: { matchLabels: { kubernetes.io/metadata.name: ingress-nginx } }
+          podSelector: { matchLabels: { app.kubernetes.io/name: ingress-nginx } }
+      ports: [{ protocol: TCP, port: 8080 }]
+  egress:
+    - to: [{ podSelector: { matchLabels: { app: api } } }]
+      ports: [{ protocol: TCP, port: 8000 }]
